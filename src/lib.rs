@@ -1,7 +1,7 @@
 use core::fmt::{self, Write};
 use core::sync::atomic::AtomicUsize;
 
-use log;
+
 use tracing::{
     dispatcher::SetGlobalDefaultError,
     field::{Field, Visit},
@@ -36,7 +36,7 @@ impl Default for WASMLayerConfig {
     }
 }
 
-/// Implements [tracing_subscriber::layer::Layer] which uses [wasm_bindgen] for marking and measuring with `window.performance`
+/// Implements [Layer] which uses [wasm_bindgen] for marking and measuring with `window.performance`
 pub struct WASMLayer {
     last_event_id: AtomicUsize,
     config: WASMLayerConfig,
@@ -55,6 +55,10 @@ impl Default for WASMLayer {
     fn default() -> Self {
         WASMLayer::new(WASMLayerConfig::default())
     }
+}
+
+fn mark_name(id: &tracing::Id) -> String {
+    format!("t{:x}", id.into_u64())
 }
 
 fn trace_level_to_log_level(trace_level: &tracing::Level) -> log::Level {
@@ -100,12 +104,12 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for WASMLayer {
             let log_level = trace_level_to_log_level(level);
             log::logger().log(
                 &log::RecordBuilder::new()
-                    .module_path(Some(&meta.module_path().unwrap_or_default()))
+                    .module_path(Some(meta.module_path().unwrap_or_default()))
                     .target(target)
                     .file(Some(meta.file().unwrap_or_default()))
                     .line(Some(meta.line().unwrap_or_default()))
                     .level(log_level)
-                    .args(format_args!("{}{};{}", thread_display_suffix(), meta.name(), body))
+                    .args(format_args!("{};{}", meta.name(), body))
                     .build()
             )
         }
@@ -133,12 +137,12 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for WASMLayer {
                 let log_level = trace_level_to_log_level(level);
                 log::logger().log(
                     &log::RecordBuilder::new()
-                        .module_path(Some(&meta.module_path().unwrap_or_default()))
+                        .module_path(Some(meta.module_path().unwrap_or_default()))
                         .target(meta.target())
                         .file(Some(meta.file().unwrap_or_default()))
                         .line(Some(meta.line().unwrap_or_default()))
                         .level(log_level)
-                        .args(format_args!("{}{}", thread_display_suffix(), recorder))
+                        .args(format_args!("{}", recorder))
                         .build()
                 )
             }
@@ -152,10 +156,9 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for WASMLayer {
                 mark(&mark_name);
                 let _ = measure(
                     format!(
-                        "{} {}{} {}",
+                        "{} {} {}",
                         level,
                         meta.module_path().unwrap_or("..."),
-                        thread_display_suffix(),
                         recorder,
                     ),
                     mark_name,
@@ -174,9 +177,8 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for WASMLayer {
             if let Some(debug_record) = span_ref.extensions().get::<StringRecorder>() {
                 let _ = measure(
                     format!(
-                        "\"{}\"{} {} {}",
+                        "\"{}\" {} {}",
                         meta.name(),
-                        thread_display_suffix(),
                         meta.module_path().unwrap_or("..."),
                         debug_record,
                     ),
@@ -185,9 +187,8 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for WASMLayer {
             } else {
                 let _ = measure(
                     format!(
-                        "\"{}\"{} {}",
+                        "\"{}\" {}",
                         meta.name(),
-                        thread_display_suffix(),
                         meta.module_path().unwrap_or("..."),
                     ),
                     mark_name(id),
@@ -260,7 +261,7 @@ impl Visit for StringRecorder {
     }
 }
 
-impl core::fmt::Display for StringRecorder {
+impl fmt::Display for StringRecorder {
     fn fmt(&self, mut f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if !self.display.is_empty() {
             write!(&mut f, " {}", self.display)
@@ -270,7 +271,7 @@ impl core::fmt::Display for StringRecorder {
     }
 }
 
-impl core::default::Default for StringRecorder {
+impl Default for StringRecorder {
     fn default() -> Self {
         StringRecorder::new()
     }
