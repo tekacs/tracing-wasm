@@ -2,14 +2,13 @@ use core::fmt::{self, Write};
 use core::sync::atomic::AtomicUsize;
 
 use log;
-use tracing::Subscriber;
 use tracing::{
     dispatcher::SetGlobalDefaultError,
     field::{Field, Visit},
 };
+use tracing::Subscriber;
 use tracing_subscriber::layer::*;
 use tracing_subscriber::registry::*;
-
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -20,11 +19,6 @@ extern "C" {
     fn measure(name: String, startMark: String) -> Result<(), JsValue>;
 }
 
-pub enum ConsoleConfig {
-    NoReporting,
-    ReportInConsole,
-}
-
 #[derive(Debug, PartialEq)]
 pub struct WASMLayerConfig {
     pub report_logs_in_timings: bool,
@@ -32,7 +26,7 @@ pub struct WASMLayerConfig {
     pub max_level: tracing::Level,
 }
 
-impl core::default::Default for WASMLayerConfig {
+impl Default for WASMLayerConfig {
     fn default() -> Self {
         WASMLayerConfig {
             report_logs_in_timings: true,
@@ -57,40 +51,10 @@ impl WASMLayer {
     }
 }
 
-impl core::default::Default for WASMLayer {
+impl Default for WASMLayer {
     fn default() -> Self {
         WASMLayer::new(WASMLayerConfig::default())
     }
-}
-
-#[cfg(not(feature = "mark-with-rayon-thread-index"))]
-#[inline]
-fn thread_display_suffix() -> &'static str {
-    ""
-}
-
-#[cfg(feature = "mark-with-rayon-thread-index")]
-fn thread_display_suffix() -> String {
-    let mut message = " #".to_string();
-    match rayon::current_thread_index() {
-        Some(idx) => message.push_str(&format!("{}", idx)),
-        None => message.push_str("main"),
-    }
-    message
-}
-
-#[cfg(not(feature = "mark-with-rayon-thread-index"))]
-fn mark_name(id: &tracing::Id) -> String {
-    format!("t{:x}", id.into_u64())
-}
-
-#[cfg(feature = "mark-with-rayon-thread-index")]
-fn mark_name(id: &tracing::Id) -> String {
-    format!(
-        "t{:x}-{}",
-        id.into_u64(),
-        rayon::current_thread_index().unwrap_or(999)
-    )
 }
 
 fn trace_level_to_log_level(trace_level: &tracing::Level) -> log::Level {
@@ -314,6 +278,7 @@ impl core::default::Default for StringRecorder {
 
 pub mod tracing_logger {
     use core::fmt;
+
     pub use log::*;
     use tracing::field::{Field, ValueSet, Visit};
 
@@ -333,6 +298,14 @@ pub mod tracing_logger {
             }
 
             impl Visit for LogVisitor<'_, '_> {
+                fn record_str(&mut self, field: &Field, value: &str) {
+                    if field.name() == "message" {
+                        self.record_debug(field, &format_args!("{}", value))
+                    } else {
+                        self.record_debug(field, &value)
+                    }
+                }
+
                 fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
                     let res = if self.is_first {
                         self.is_first = false;
@@ -346,14 +319,6 @@ pub mod tracing_logger {
                     };
                     if let Err(err) = res {
                         self.result = self.result.and(Err(err));
-                    }
-                }
-
-                fn record_str(&mut self, field: &Field, value: &str) {
-                    if field.name() == "message" {
-                        self.record_debug(field, &format_args!("{}", value))
-                    } else {
-                        self.record_debug(field, &value)
                     }
                 }
             }
