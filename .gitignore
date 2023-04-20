@@ -2,6 +2,7 @@ target/
 
 **/.DS_Store
 **/Thumbs.db
+.idea
 
 # Ignore Cargo.lock for libraries
 Cargo.lock
