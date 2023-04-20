@@ -281,61 +281,13 @@ fn mark_name(id: &tracing::Id) -> String {
     )
 }
 
-
-pub mod tracing_logger {
-    use core::fmt;
-    pub use log::*;
-    use tracing::field::{Field, ValueSet, Visit};
-
-    /// Utility to format [`ValueSet`]s for logging.
-    pub(crate) struct LogValueSet<'a> {
-        pub(crate) values: &'a ValueSet<'a>,
-        pub(crate) is_first: bool,
-    }
-
-    impl<'a> fmt::Display for LogValueSet<'a> {
-        #[inline]
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            struct LogVisitor<'a, 'b> {
-                f: &'a mut fmt::Formatter<'b>,
-                is_first: bool,
-                result: fmt::Result,
-            }
-
-            impl Visit for LogVisitor<'_, '_> {
-                fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
-                    let res = if self.is_first {
-                        self.is_first = false;
-                        if field.name() == "message" {
-                            write!(self.f, "{:?}", value)
-                        } else {
-                            write!(self.f, "{}={:?}", field.name(), value)
-                        }
-                    } else {
-                        write!(self.f, " {}={:?}", field.name(), value)
-                    };
-                    if let Err(err) = res {
-                        self.result = self.result.and(Err(err));
-                    }
-                }
-
-                fn record_str(&mut self, field: &Field, value: &str) {
-                    if field.name() == "message" {
-                        self.record_debug(field, &format_args!("{}", value))
-                    } else {
-                        self.record_debug(field, &value)
-                    }
-                }
-            }
-
-            let mut visit = LogVisitor {
-                f,
-                is_first: self.is_first,
-                result: Ok(()),
-            };
-            self.values.record(&mut visit);
-            visit.result
-        }
+fn trace_level_to_log_level(trace_level: &tracing::Level) -> log::Level {
+    match *trace_level {
+        tracing::Level::TRACE => log::Level::Trace,
+        tracing::Level::DEBUG => log::Level::Debug,
+        tracing::Level::INFO => log::Level::Info,
+        tracing::Level::WARN => log::Level::Warn,
+        tracing::Level::ERROR => log::Level::Error,
     }
 }
 
@@ -370,13 +322,7 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for WASMLayer {
             };
             let body = format!("{}", tracing_logger::LogValueSet { values: attrs.values(), is_first: false });
             if self.config.use_console_color {
-                let log_level = match *level {
-                    tracing::Level::TRACE => log::Level::Trace,
-                    tracing::Level::DEBUG => log::Level::Debug,
-                    tracing::Level::INFO => log::Level::Info,
-                    tracing::Level::WARN => log::Level::Warn,
-                    tracing::Level::ERROR => log::Level::Error,
-                };
+                let log_level = trace_level_to_log_level(level);
                 log::logger().log(
                     &log::RecordBuilder::new()
                         .module_path(Some(&meta.module_path().unwrap_or_default()))
@@ -430,13 +376,7 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for WASMLayer {
             let level = meta.level();
             if self.config.report_logs_in_console {
                 if self.config.use_console_color {
-                    let log_level = match *level {
-                        tracing::Level::TRACE => log::Level::Trace,
-                        tracing::Level::DEBUG => log::Level::Debug,
-                        tracing::Level::INFO => log::Level::Info,
-                        tracing::Level::WARN => log::Level::Warn,
-                        tracing::Level::ERROR => log::Level::Error,
-                    };
+                    let log_level = trace_level_to_log_level(level);
                     log::logger().log(
                         &log::RecordBuilder::new()
                             .module_path(Some(&meta.module_path().unwrap_or_default()))
@@ -599,5 +539,62 @@ impl core::fmt::Display for StringRecorder {
 impl core::default::Default for StringRecorder {
     fn default() -> Self {
         StringRecorder::new()
+    }
+}
+
+pub mod tracing_logger {
+    use core::fmt;
+    pub use log::*;
+    use tracing::field::{Field, ValueSet, Visit};
+
+    /// Utility to format [`ValueSet`]s for logging.
+    pub(crate) struct LogValueSet<'a> {
+        pub(crate) values: &'a ValueSet<'a>,
+        pub(crate) is_first: bool,
+    }
+
+    impl<'a> fmt::Display for LogValueSet<'a> {
+        #[inline]
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            struct LogVisitor<'a, 'b> {
+                f: &'a mut fmt::Formatter<'b>,
+                is_first: bool,
+                result: fmt::Result,
+            }
+
+            impl Visit for LogVisitor<'_, '_> {
+                fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
+                    let res = if self.is_first {
+                        self.is_first = false;
+                        if field.name() == "message" {
+                            write!(self.f, "{:?}", value)
+                        } else {
+                            write!(self.f, "{}={:?}", field.name(), value)
+                        }
+                    } else {
+                        write!(self.f, " {}={:?}", field.name(), value)
+                    };
+                    if let Err(err) = res {
+                        self.result = self.result.and(Err(err));
+                    }
+                }
+
+                fn record_str(&mut self, field: &Field, value: &str) {
+                    if field.name() == "message" {
+                        self.record_debug(field, &format_args!("{}", value))
+                    } else {
+                        self.record_debug(field, &value)
+                    }
+                }
+            }
+
+            let mut visit = LogVisitor {
+                f,
+                is_first: self.is_first,
+                result: Ok(()),
+            };
+            self.values.record(&mut visit);
+            visit.result
+        }
     }
 }
