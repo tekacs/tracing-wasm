@@ -281,6 +281,64 @@ fn mark_name(id: &tracing::Id) -> String {
     )
 }
 
+
+pub mod tracing_logger {
+    use core::fmt;
+    pub use log::*;
+    use tracing::field::{Field, ValueSet, Visit};
+
+    /// Utility to format [`ValueSet`]s for logging.
+    pub(crate) struct LogValueSet<'a> {
+        pub(crate) values: &'a ValueSet<'a>,
+        pub(crate) is_first: bool,
+    }
+
+    impl<'a> fmt::Display for LogValueSet<'a> {
+        #[inline]
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            struct LogVisitor<'a, 'b> {
+                f: &'a mut fmt::Formatter<'b>,
+                is_first: bool,
+                result: fmt::Result,
+            }
+
+            impl Visit for LogVisitor<'_, '_> {
+                fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
+                    let res = if self.is_first {
+                        self.is_first = false;
+                        if field.name() == "message" {
+                            write!(self.f, "{:?}", value)
+                        } else {
+                            write!(self.f, "{}={:?}", field.name(), value)
+                        }
+                    } else {
+                        write!(self.f, " {}={:?}", field.name(), value)
+                    };
+                    if let Err(err) = res {
+                        self.result = self.result.and(Err(err));
+                    }
+                }
+
+                fn record_str(&mut self, field: &Field, value: &str) {
+                    if field.name() == "message" {
+                        self.record_debug(field, &format_args!("{}", value))
+                    } else {
+                        self.record_debug(field, &value)
+                    }
+                }
+            }
+
+            let mut visit = LogVisitor {
+                f,
+                is_first: self.is_first,
+                result: Ok(()),
+            };
+            self.values.record(&mut visit);
+            visit.result
+        }
+    }
+}
+
 impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for WASMLayer {
     fn enabled(&self, metadata: &tracing::Metadata<'_>, _: Context<'_, S>) -> bool {
         let level = metadata.level();
@@ -300,6 +358,55 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for WASMLayer {
             span_ref
                 .extensions_mut()
                 .insert::<StringRecorder>(new_debug_record);
+        }
+
+        if self.config.report_logs_in_console {
+            let meta = attrs.metadata();
+            let level = meta.level();
+            let target = if attrs.is_empty() {
+                "tracing::span"
+            } else {
+                meta.target()
+            };
+            let body = format!("{}", tracing_logger::LogValueSet { values: attrs.values(), is_first: false });
+            if self.config.use_console_color {
+                let log_level = match *level {
+                    tracing::Level::TRACE => log::Level::Trace,
+                    tracing::Level::DEBUG => log::Level::Debug,
+                    tracing::Level::INFO => log::Level::Info,
+                    tracing::Level::WARN => log::Level::Warn,
+                    tracing::Level::ERROR => log::Level::Error,
+                };
+                log::logger().log(
+                    &log::RecordBuilder::new()
+                        .module_path(Some(&meta.module_path().unwrap_or_default()))
+                        .target(target)
+                        .file(Some(meta.file().unwrap_or_default()))
+                        .line(Some(meta.line().unwrap_or_default()))
+                        .level(log_level)
+                        .args(format_args!("{}{};{}", thread_display_suffix(), meta.name(), body))
+                        .build()
+                )
+            } else {
+                let origin = meta
+                    .file()
+                    .and_then(|file| meta.line().map(|ln| format!("{}:{}", file, ln)))
+                    .unwrap_or_default();
+                let output = format!(
+                    "{} {}{} {}",
+                    level,
+                    origin,
+                    thread_display_suffix(),
+                    body,
+                );
+                match *level {
+                    tracing::Level::TRACE => debug1(output),
+                    tracing::Level::DEBUG => debug1(output),
+                    tracing::Level::INFO => info1(output),
+                    tracing::Level::WARN => warn1(output),
+                    tracing::Level::ERROR => error1(output),
+                }
+            }
         }
     }
 
