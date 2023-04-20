@@ -18,31 +18,6 @@ extern "C" {
     fn mark(a: &str);
     #[wasm_bindgen(catch, js_namespace = performance)]
     fn measure(name: String, startMark: String) -> Result<(), JsValue>;
-
-    #[wasm_bindgen(js_namespace = console, js_name = log)]
-    fn log1(message: String);
-    #[wasm_bindgen(js_namespace = console, js_name = log)]
-    fn log4(message1: String, message2: &str, message3: &str, message4: &str);
-
-    #[wasm_bindgen(js_namespace = console, js_name = log)]
-    fn debug1(message: String);
-    #[wasm_bindgen(js_namespace = console, js_name = debug)]
-    fn debug4(message1: String, message2: &str, message3: &str, message4: &str);
-
-    #[wasm_bindgen(js_namespace = console, js_name = log)]
-    fn info1(message: String);
-    #[wasm_bindgen(js_namespace = console, js_name = info)]
-    fn info4(message1: String, message2: &str, message3: &str, message4: &str);
-
-    #[wasm_bindgen(js_namespace = console, js_name = log)]
-    fn warn1(message: String);
-    #[wasm_bindgen(js_namespace = console, js_name = warn)]
-    fn warn4(message1: String, message2: &str, message3: &str, message4: &str);
-
-    #[wasm_bindgen(js_namespace = console, js_name = log)]
-    fn error1(message: String);
-    #[wasm_bindgen(js_namespace = console, js_name = error)]
-    fn error4(message1: String, message2: &str, message3: &str, message4: &str);
 }
 
 #[cfg(test)]
@@ -60,7 +35,6 @@ mod test {
             WASMLayerConfig {
                 report_logs_in_timings: true,
                 report_logs_in_console: true,
-                use_console_color: true,
                 max_level: tracing::Level::TRACE,
             }
         )
@@ -84,29 +58,6 @@ mod test {
         let config = builder.build();
 
         assert_eq!(config.report_logs_in_console, false);
-        assert_eq!(config.use_console_color, false);
-    }
-
-    #[test]
-    fn test_set_console_config_without_color() {
-        let mut builder = WASMLayerConfigBuilder::new();
-        builder.set_console_config(ConsoleConfig::ReportWithoutConsoleColor);
-
-        let config = builder.build();
-
-        assert_eq!(config.report_logs_in_console, true);
-        assert_eq!(config.use_console_color, false);
-    }
-
-    #[test]
-    fn test_set_console_config_with_color() {
-        let mut builder = WASMLayerConfigBuilder::new();
-        builder.set_console_config(ConsoleConfig::ReportWithConsoleColor);
-
-        let config = builder.build();
-
-        assert_eq!(config.report_logs_in_console, true);
-        assert_eq!(config.use_console_color, true);
     }
 
     #[test]
@@ -131,8 +82,7 @@ mod test {
 
 pub enum ConsoleConfig {
     NoReporting,
-    ReportWithoutConsoleColor,
-    ReportWithConsoleColor,
+    ReportInConsole,
 }
 
 pub struct WASMLayerConfigBuilder {
@@ -140,8 +90,6 @@ pub struct WASMLayerConfigBuilder {
     report_logs_in_timings: bool,
     /// Log events will be logged to the browser console
     report_logs_in_console: bool,
-    /// Only relevant if report_logs_in_console is true, this will use color style strings in the console.
-    use_console_color: bool,
     /// Log events will be reported from this level -- Default is ALL (TRACE)
     max_level: tracing::Level,
 }
@@ -174,15 +122,9 @@ impl WASMLayerConfigBuilder {
         match console_config {
             ConsoleConfig::NoReporting => {
                 self.report_logs_in_console = false;
-                self.use_console_color = false;
             }
-            ConsoleConfig::ReportWithoutConsoleColor => {
+            ConsoleConfig::ReportInConsole => {
                 self.report_logs_in_console = true;
-                self.use_console_color = false;
-            }
-            ConsoleConfig::ReportWithConsoleColor => {
-                self.report_logs_in_console = true;
-                self.use_console_color = true;
             }
         }
 
@@ -194,7 +136,6 @@ impl WASMLayerConfigBuilder {
         WASMLayerConfig {
             report_logs_in_timings: self.report_logs_in_timings,
             report_logs_in_console: self.report_logs_in_console,
-            use_console_color: self.use_console_color,
             max_level: self.max_level,
         }
     }
@@ -205,7 +146,6 @@ impl Default for WASMLayerConfigBuilder {
         WASMLayerConfigBuilder {
             report_logs_in_timings: true,
             report_logs_in_console: true,
-            use_console_color: true,
             max_level: tracing::Level::TRACE,
         }
     }
@@ -215,7 +155,6 @@ impl Default for WASMLayerConfigBuilder {
 pub struct WASMLayerConfig {
     report_logs_in_timings: bool,
     report_logs_in_console: bool,
-    use_console_color: bool,
     max_level: tracing::Level,
 }
 
@@ -224,7 +163,6 @@ impl core::default::Default for WASMLayerConfig {
         WASMLayerConfig {
             report_logs_in_timings: true,
             report_logs_in_console: true,
-            use_console_color: true,
             max_level: tracing::Level::TRACE,
         }
     }
@@ -321,38 +259,17 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for WASMLayer {
                 meta.target()
             };
             let body = format!("{}", tracing_logger::LogValueSet { values: attrs.values(), is_first: false });
-            if self.config.use_console_color {
-                let log_level = trace_level_to_log_level(level);
-                log::logger().log(
-                    &log::RecordBuilder::new()
-                        .module_path(Some(&meta.module_path().unwrap_or_default()))
-                        .target(target)
-                        .file(Some(meta.file().unwrap_or_default()))
-                        .line(Some(meta.line().unwrap_or_default()))
-                        .level(log_level)
-                        .args(format_args!("{}{};{}", thread_display_suffix(), meta.name(), body))
-                        .build()
-                )
-            } else {
-                let origin = meta
-                    .file()
-                    .and_then(|file| meta.line().map(|ln| format!("{}:{}", file, ln)))
-                    .unwrap_or_default();
-                let output = format!(
-                    "{} {}{} {}",
-                    level,
-                    origin,
-                    thread_display_suffix(),
-                    body,
-                );
-                match *level {
-                    tracing::Level::TRACE => debug1(output),
-                    tracing::Level::DEBUG => debug1(output),
-                    tracing::Level::INFO => info1(output),
-                    tracing::Level::WARN => warn1(output),
-                    tracing::Level::ERROR => error1(output),
-                }
-            }
+            let log_level = trace_level_to_log_level(level);
+            log::logger().log(
+                &log::RecordBuilder::new()
+                    .module_path(Some(&meta.module_path().unwrap_or_default()))
+                    .target(target)
+                    .file(Some(meta.file().unwrap_or_default()))
+                    .line(Some(meta.line().unwrap_or_default()))
+                    .level(log_level)
+                    .args(format_args!("{}{};{}", thread_display_suffix(), meta.name(), body))
+                    .build()
+            )
         }
     }
 
@@ -375,38 +292,17 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for WASMLayer {
             let meta = event.metadata();
             let level = meta.level();
             if self.config.report_logs_in_console {
-                if self.config.use_console_color {
-                    let log_level = trace_level_to_log_level(level);
-                    log::logger().log(
-                        &log::RecordBuilder::new()
-                            .module_path(Some(&meta.module_path().unwrap_or_default()))
-                            .target(meta.target())
-                            .file(Some(meta.file().unwrap_or_default()))
-                            .line(Some(meta.line().unwrap_or_default()))
-                            .level(log_level)
-                            .args(format_args!("{}{}", thread_display_suffix(), recorder))
-                            .build()
-                    )
-                } else {
-                    let origin = meta
-                        .file()
-                        .and_then(|file| meta.line().map(|ln| format!("{}:{}", file, ln)))
-                        .unwrap_or_default();
-                    let output = format!(
-                        "{} {}{} {}",
-                        level,
-                        origin,
-                        thread_display_suffix(),
-                        recorder,
-                    );
-                    match *level {
-                        tracing::Level::TRACE => debug1(output),
-                        tracing::Level::DEBUG => debug1(output),
-                        tracing::Level::INFO => info1(output),
-                        tracing::Level::WARN => warn1(output),
-                        tracing::Level::ERROR => error1(output),
-                    }
-                }
+                let log_level = trace_level_to_log_level(level);
+                log::logger().log(
+                    &log::RecordBuilder::new()
+                        .module_path(Some(&meta.module_path().unwrap_or_default()))
+                        .target(meta.target())
+                        .file(Some(meta.file().unwrap_or_default()))
+                        .line(Some(meta.line().unwrap_or_default()))
+                        .level(log_level)
+                        .args(format_args!("{}{}", thread_display_suffix(), recorder))
+                        .build()
+                )
             }
             if self.config.report_logs_in_timings {
                 let mark_name = format!(
